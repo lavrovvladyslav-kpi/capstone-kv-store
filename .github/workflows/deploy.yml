@@ -43,7 +43,7 @@ jobs:
 
             echo "2. Restarting Coordinator..."
 
-            COORD_PID=$(pgrep -f "python3 /home/ec2-user/kv_node.py --role coordinator" | head -1 || true)
+            COORD_PID=$(ss -lntp | sed -n 's/.*:8000 .*pid=\([0-9]*\).*/\1/p' | head -1 || true)
 
             if [ -n "$COORD_PID" ]; then
               kill "$COORD_PID" || true
@@ -62,8 +62,8 @@ jobs:
 
             ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
               ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} \
-              "PID=\$(pgrep -f 'python3 /home/ec2-user/kv_node.py --role shard --node-id shard-1' | head -1 || true); \
-               if [ -n \"\$PID\" ]; then kill \$PID || true; sleep 2; fi; \
+              "PID=\$(ss -lntp | sed -n 's/.*:8001 .*pid=\([0-9]*\).*/\1/p' | head -1 || true); \
+               if [ -n \"\$PID\" ]; then kill \"\$PID\" || true; sleep 2; fi; \
                nohup python3 ~/kv_node.py \
                --role shard \
                --node-id shard-1 \
@@ -74,8 +74,8 @@ jobs:
 
             ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
               ec2-user@${{ secrets.SHARD2_PRIVATE_IP }} \
-              "PID=\$(pgrep -f 'python3 /home/ec2-user/kv_node.py --role shard --node-id shard-2' | head -1 || true); \
-               if [ -n \"\$PID\" ]; then kill \$PID || true; sleep 2; fi; \
+              "PID=\$(ss -lntp | sed -n 's/.*:8002 .*pid=\([0-9]*\).*/\1/p' | head -1 || true); \
+               if [ -n \"\$PID\" ]; then kill \"\$PID\" || true; sleep 2; fi; \
                nohup python3 ~/kv_node.py \
                --role shard \
                --node-id shard-2 \
@@ -88,8 +88,8 @@ jobs:
 
             ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
               ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} \
-              "PID=\$(pgrep -f 'python3 /home/ec2-user/kv_node.py --role shard --node-id shard-3' | head -1 || true); \
-               if [ -n \"\$PID\" ]; then kill \$PID || true; sleep 2; fi; \
+              "PID=\$(ss -lntp | sed -n 's/.*:8003 .*pid=\([0-9]*\).*/\1/p' | head -1 || true); \
+               if [ -n \"\$PID\" ]; then kill \"\$PID\" || true; sleep 2; fi; \
                nohup python3 ~/kv_node.py \
                --role shard \
                --node-id shard-3 \
