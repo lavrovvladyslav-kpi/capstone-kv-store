@@ -1,0 +1,47 @@
+name: Deploy Distributed KV Store to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.COORDINATOR_PUBLIC_IP }} >> ~/.ssh/known_hosts
+
+      - name: Copy updated files to Coordinator
+        run: |
+          scp kv_node.py benchmark_hashing.py openapi.yaml ec2-user@${{ secrets.COORDINATOR_PUBLIC_IP }}:~/
+
+      - name: Rollout update to Private Shards and Restart Cluster
+        run: |
+          ssh ec2-user@${{ secrets.COORDINATOR_PUBLIC_IP }} << 'EOF'
+            set -e
+            echo "1. Оновлюємо код на приватних шардах..."
+            scp -i ~/capstone-key.pem -o StrictHostKeyChecking=no ~/kv_node.py ec2-user@${{ secrets.SHARD1_PRIVATE_IP }}:~/
+            scp -i ~/capstone-key.pem -o StrictHostKeyChecking=no ~/kv_node.py ec2-user@${{ secrets.SHARD2_PRIVATE_IP }}:~/
+
+            echo "2. Перезапускаємо Координатор..."
+            pkill -f "kv_node.py --role coordinator" || true
+            nohup python3 ~/kv_node.py --role coordinator --node-id coordinator-1 --port 8000 > ~/coordinator.log 2>&1 &
+            sleep 2
+
+            echo "3. Перезапускаємо Шард 1 та Шард 2..."
+            ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} "pkill -f 'kv_node.py --role shard' || true; nohup python3 ~/kv_node.py --role shard --node-id shard-1 --port 8001 --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 --advertise-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8001 > ~/shard1.log 2>&1 &"
+            ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.SHARD2_PRIVATE_IP }} "pkill -f 'kv_node.py --role shard' || true; nohup python3 ~/kv_node.py --role shard --node-id shard-2 --port 8002 --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 --advertise-url http://${{ secrets.SHARD2_PRIVATE_IP }}:8002 > ~/shard2.log 2>&1 &"
+            sleep 2
+
+            echo "4. Перевірка стану кластера після деплою:"
+            curl -s http://localhost:8000/health
+          EOF

@@ -1,0 +1,168 @@
+openapi: 3.0.3
+info:
+  title: Distributed Key-Value Store API (Capstone KPI)
+  description: Специфікація API вузла-координатора та шардів із підтримкою Consistent Hashing і складеного первинного ключа (Partition Key + Sort Key).
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000
+    description: Вузол-координатор
+paths:
+  /tables:
+    post:
+      summary: Реєстрація визначення таблиці
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [table_name, partition_key]
+              properties:
+                table_name:
+                  type: string
+                  example: users
+                partition_key:
+                  type: string
+                  example: user_id
+                sort_key:
+                  type: string
+                  nullable: true
+                  example: created_at
+      responses:
+        '201':
+          description: Таблицю успішно створено
+    get:
+      summary: Отримати список зареєстрованих таблиць
+      responses:
+        '200':
+          description: Список схем таблиць
+
+  /shards:
+    get:
+      summary: Список активних шардів та стан хеш-кільця
+      responses:
+        '200':
+          description: Інформація про зареєстровані шарди
+  /shards/register:
+    post:
+      summary: Реєстрація нового шарда в координаторі
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shard_id, url]
+              properties:
+                shard_id:
+                  type: string
+                  example: shard-1
+                url:
+                  type: string
+                  example: http://10.0.11.50:8001
+      responses:
+        '200':
+          description: Шард зареєстровано та ключі перебалансовано
+
+  /tables/{table_name}/items:
+    post:
+      summary: CREATE — Покласти пару ключ-значення
+      parameters:
+        - in: path
+          name: table_name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pk, value]
+              properties:
+                pk:
+                  type: string
+                  description: Partition Key
+                  example: user_101
+                sk:
+                  type: string
+                  description: Sort Key (опціонально, якщо таблиця зі складеним ключем)
+                  example: order_2026_01
+                value:
+                  type: object
+                  example: {"product": "Laptop", "price": 1200}
+      responses:
+        '201':
+          description: Запис збережено на відповідному шарді
+
+  /tables/{table_name}/items/{pk}:
+    get:
+      summary: READ — Прочитати значення за ключем (або всі записи партиції)
+      parameters:
+        - in: path
+          name: table_name
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: pk
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: sk
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Значення знайдено
+        '404':
+          description: Ключ не знайдено
+    delete:
+      summary: DELETE — Видалити запис за ключем
+      parameters:
+        - in: path
+          name: table_name
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: pk
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: sk
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Запис видалено
+        '404':
+          description: Ключ не знайдено
+
+  /tables/{table_name}/items/{pk}/exists:
+    get:
+      summary: EXISTS — Перевірити наявність значення за ключем
+      parameters:
+        - in: path
+          name: table_name
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: pk
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: sk
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Результат перевірки існування ключа (true/false)
