@@ -43,7 +43,12 @@ jobs:
 
             echo "2. Restarting Coordinator..."
 
-            pkill -f '^python3 .*kv_node.py --role coordinator' || true
+            COORD_PID=$(pgrep -f "python3 /home/ec2-user/kv_node.py --role coordinator" | head -1 || true)
+
+            if [ -n "$COORD_PID" ]; then
+              kill "$COORD_PID" || true
+              sleep 2
+            fi
 
             nohup python3 ~/kv_node.py \
               --role coordinator \
@@ -57,7 +62,8 @@ jobs:
 
             ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
               ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} \
-              "pkill -f '^python3 .*kv_node.py --role shard --node-id shard-1' || true; \
+              "PID=\$(pgrep -f 'python3 /home/ec2-user/kv_node.py --role shard --node-id shard-1' | head -1 || true); \
+               if [ -n \"\$PID\" ]; then kill \$PID || true; sleep 2; fi; \
                nohup python3 ~/kv_node.py \
                --role shard \
                --node-id shard-1 \
@@ -68,7 +74,8 @@ jobs:
 
             ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
               ec2-user@${{ secrets.SHARD2_PRIVATE_IP }} \
-              "pkill -f '^python3 .*kv_node.py --role shard --node-id shard-2' || true; \
+              "PID=\$(pgrep -f 'python3 /home/ec2-user/kv_node.py --role shard --node-id shard-2' | head -1 || true); \
+               if [ -n \"\$PID\" ]; then kill \$PID || true; sleep 2; fi; \
                nohup python3 ~/kv_node.py \
                --role shard \
                --node-id shard-2 \
@@ -81,7 +88,8 @@ jobs:
 
             ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
               ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} \
-              "pkill -f '^python3 .*kv_node.py --role shard --node-id shard-3' || true; \
+              "PID=\$(pgrep -f 'python3 /home/ec2-user/kv_node.py --role shard --node-id shard-3' | head -1 || true); \
+               if [ -n \"\$PID\" ]; then kill \$PID || true; sleep 2; fi; \
                nohup python3 ~/kv_node.py \
                --role shard \
                --node-id shard-3 \
