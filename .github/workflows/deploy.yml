@@ -54,7 +54,7 @@ jobs:
               --role coordinator \
               --node-id coordinator-1 \
               --port 8000 \
-              > ~/coordinator.log 2>&1 &
+              < /dev/null > ~/coordinator.log 2>&1 &
 
             sleep 3
 
@@ -70,7 +70,7 @@ jobs:
                --port 8001 \
                --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 \
                --advertise-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8001 \
-               > ~/shard1.log 2>&1 &"
+               < /dev/null > ~/shard1.log 2>&1 &"
 
             ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
               ec2-user@${{ secrets.SHARD2_PRIVATE_IP }} \
@@ -82,7 +82,7 @@ jobs:
                --port 8002 \
                --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 \
                --advertise-url http://${{ secrets.SHARD2_PRIVATE_IP }}:8002 \
-               > ~/shard2.log 2>&1 &"
+               < /dev/null > ~/shard2.log 2>&1 &"
 
             echo "4. Restarting Shard 3 on Shard 1 host..."
 
@@ -96,7 +96,7 @@ jobs:
                --port 8003 \
                --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 \
                --advertise-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8003 \
-               > ~/shard3.log 2>&1 &"
+               < /dev/null > ~/shard3.log 2>&1 &"
 
             sleep 5
 
