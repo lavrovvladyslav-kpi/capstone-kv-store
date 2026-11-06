@@ -43,7 +43,7 @@ jobs:
 
             echo "2. Restarting Coordinator..."
 
-            pkill -f '[k]v_node.py --role coordinator' || true
+            pkill -f '^python3 .*kv_node.py --role coordinator' || true
 
             nohup python3 ~/kv_node.py \
               --role coordinator \
@@ -57,7 +57,7 @@ jobs:
 
             ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
               ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} \
-              "pkill -f '[k]v_node.py --role shard' || true; \
+              "pkill -f '^python3 .*kv_node.py --role shard --node-id shard-1' || true; \
                nohup python3 ~/kv_node.py \
                --role shard \
                --node-id shard-1 \
@@ -68,7 +68,7 @@ jobs:
 
             ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
               ec2-user@${{ secrets.SHARD2_PRIVATE_IP }} \
-              "pkill -f '[k]v_node.py --role shard' || true; \
+              "pkill -f '^python3 .*kv_node.py --role shard --node-id shard-2' || true; \
                nohup python3 ~/kv_node.py \
                --role shard \
                --node-id shard-2 \
@@ -77,17 +77,18 @@ jobs:
                --advertise-url http://${{ secrets.SHARD2_PRIVATE_IP }}:8002 \
                > ~/shard2.log 2>&1 &"
 
-            echo "4. Starting Shard 3 on Shard 1 host..."
+            echo "4. Restarting Shard 3 on Shard 1 host..."
 
             ssh -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
               ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} \
-              "nohup python3 ~/kv_node.py \
-              --role shard \
-              --node-id shard-3 \
-              --port 8003 \
-              --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 \
-              --advertise-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8003 \
-              > ~/shard3.log 2>&1 &"
+              "pkill -f '^python3 .*kv_node.py --role shard --node-id shard-3' || true; \
+               nohup python3 ~/kv_node.py \
+               --role shard \
+               --node-id shard-3 \
+               --port 8003 \
+               --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 \
+               --advertise-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8003 \
+               > ~/shard3.log 2>&1 &"
 
             sleep 5
 
