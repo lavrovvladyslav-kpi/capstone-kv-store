@@ -893,6 +893,9 @@ if __name__ == "__main__":
     print(f"[{ROLE.upper()}] Вузол '{NODE_ID}' (shard={SHARD_ID}, replica_role={REPLICA_ROLE}) запущено на {args.host}:{args.port}")
 
     if ROLE == "shard" and args.coordinator_url and args.advertise_url:
-        register_with_coordinator(args.coordinator_url, SHARD_ID, NODE_ID, REPLICA_ROLE, args.advertise_url)
+        threading.Thread(
+            target=lambda: (time.sleep(0.5), register_with_coordinator(args.coordinator_url, SHARD_ID, NODE_ID, REPLICA_ROLE, args.advertise_url)),
+            daemon=True
+        ).start()
 
     server.serve_forever()
