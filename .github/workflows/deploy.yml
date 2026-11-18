@@ -1,4 +1,4 @@
-name: Deploy Distributed KV Store to AWS EC2
+name: Deploy Replicated KV Store to AWS EC2 (Milestone 3)
 
 on:
   push:
@@ -9,7 +9,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,90 +22,37 @@ jobs:
 
       - name: Copy updated files to Coordinator
         run: |
-          scp kv_node.py benchmark_hashing.py openapi.yaml \
+          scp kv_node.py benchmark_hashing.py benchmark_replication.py openapi.yaml \
             ec2-user@${{ secrets.COORDINATOR_PUBLIC_IP }}:~/
 
-      - name: Rollout update to Private Shards and Restart Cluster
+      - name: Rollout Replicated Cluster (2 Shards x 3 Replicas)
         run: |
           ssh ec2-user@${{ secrets.COORDINATOR_PUBLIC_IP }} << 'EOF'
             set -e
+            echo "1. Updating code on private shard hosts..."
+            scp -i ~/capstone-key.pem -o StrictHostKeyChecking=no ~/kv_node.py ec2-user@${{ secrets.SHARD1_PRIVATE_IP }}:~/
+            scp -i ~/capstone-key.pem -o StrictHostKeyChecking=no ~/kv_node.py ec2-user@${{ secrets.SHARD2_PRIVATE_IP }}:~/
 
-            echo "1. Updating code on private shards..."
+            echo "2. Restarting Coordinator on port 8000..."
+            pkill -f '[k]v_node.py --role coordinator' || true
+            sleep 1
+            nohup python3 ~/kv_node.py --role coordinator --node-id coordinator-1 --port 8000 < /dev/null > ~/coordinator.log 2>&1 &
+            sleep 2
 
-            scp -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
-              ~/kv_node.py \
-              ec2-user@${{ secrets.SHARD1_PRIVATE_IP }}:~/
+            echo "3. Cleaning old shard processes and logs..."
+            ssh -n -i ~/capstone-key.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} "pkill -f '[k]v_node' || true; rm -f ~/wal_shard-1.jsonl ~/offset_shard-1*.json ~/state_shard-1*.json"
+            ssh -n -i ~/capstone-key.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.SHARD2_PRIVATE_IP }} "pkill -f '[k]v_node' || true; rm -f ~/wal_shard-2.jsonl ~/offset_shard-2*.json ~/state_shard-2*.json"
+            sleep 1
 
-            scp -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
-              ~/kv_node.py \
-              ec2-user@${{ secrets.SHARD2_PRIVATE_IP }}:~/
+            echo "4. Starting Replica Set for shard-1 (1 Leader + 2 Followers)..."
+            ssh -n -i ~/capstone-key.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} "nohup python3 ~/kv_node.py --role shard --replica-role leader --shard-id shard-1 --node-id shard-1-leader --port 8001 --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 --advertise-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8001 < /dev/null > ~/shard-1-leader.log 2>&1 & sleep 1; nohup python3 ~/kv_node.py --role shard --replica-role follower --shard-id shard-1 --node-id shard-1-follower-1 --port 8002 --leader-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8001 --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 --advertise-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8002 < /dev/null > ~/shard-1-follower-1.log 2>&1 & nohup python3 ~/kv_node.py --role shard --replica-role follower --shard-id shard-1 --node-id shard-1-follower-2 --port 8003 --leader-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8001 --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 --advertise-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8003 < /dev/null > ~/shard-1-follower-2.log 2>&1 &"
 
-            echo "2. Restarting Coordinator..."
+            echo "5. Starting Replica Set for shard-2 (1 Leader + 2 Followers)..."
+            ssh -n -i ~/capstone-key.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.SHARD2_PRIVATE_IP }} "nohup python3 ~/kv_node.py --role shard --replica-role leader --shard-id shard-2 --node-id shard-2-leader --port 8001 --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 --advertise-url http://${{ secrets.SHARD2_PRIVATE_IP }}:8001 < /dev/null > ~/shard-2-leader.log 2>&1 & sleep 1; nohup python3 ~/kv_node.py --role shard --replica-role follower --shard-id shard-2 --node-id shard-2-follower-1 --port 8002 --leader-url http://${{ secrets.SHARD2_PRIVATE_IP }}:8001 --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 --advertise-url http://${{ secrets.SHARD2_PRIVATE_IP }}:8002 < /dev/null > ~/shard-2-follower-1.log 2>&1 & nohup python3 ~/kv_node.py --role shard --replica-role follower --shard-id shard-2 --node-id shard-2-follower-2 --port 8003 --leader-url http://${{ secrets.SHARD2_PRIVATE_IP }}:8001 --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 --advertise-url http://${{ secrets.SHARD2_PRIVATE_IP }}:8003 < /dev/null > ~/shard-2-follower-2.log 2>&1 &"
 
-            COORD_PID=$(ss -lntp 2>/dev/null | sed -n 's/.*:8000 .*pid=\([0-9]*\).*/\1/p' | head -1 || true)
-
-            if [ -n "$COORD_PID" ]; then
-              kill "$COORD_PID" || true
-              sleep 2
-            fi
-
-            nohup python3 ~/kv_node.py \
-              --role coordinator \
-              --node-id coordinator-1 \
-              --port 8000 \
-              < /dev/null > ~/coordinator.log 2>&1 &
-
-            sleep 3
-
-            echo "3. Restarting Shard 1 and Shard 2..."
-
-            ssh -n -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
-              ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} \
-              "PID=\$(ss -lntp 2>/dev/null | sed -n 's/.*:8001 .*pid=\([0-9]*\).*/\1/p' | head -1 || true); \
-               if [ -n \"\$PID\" ]; then kill \"\$PID\" || true; sleep 2; fi; \
-               nohup python3 ~/kv_node.py \
-               --role shard \
-               --node-id shard-1 \
-               --port 8001 \
-               --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 \
-               --advertise-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8001 \
-               < /dev/null > ~/shard1.log 2>&1 &"
-
-            ssh -n -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
-              ec2-user@${{ secrets.SHARD2_PRIVATE_IP }} \
-              "PID=\$(ss -lntp 2>/dev/null | sed -n 's/.*:8002 .*pid=\([0-9]*\).*/\1/p' | head -1 || true); \
-               if [ -n \"\$PID\" ]; then kill \"\$PID\" || true; sleep 2; fi; \
-               nohup python3 ~/kv_node.py \
-               --role shard \
-               --node-id shard-2 \
-               --port 8002 \
-               --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 \
-               --advertise-url http://${{ secrets.SHARD2_PRIVATE_IP }}:8002 \
-               < /dev/null > ~/shard2.log 2>&1 &"
-
-            echo "4. Restarting Shard 3 on Shard 1 host..."
-
-            ssh -n -i ~/capstone-key.pem -o StrictHostKeyChecking=no \
-              ec2-user@${{ secrets.SHARD1_PRIVATE_IP }} \
-              "PID=\$(ss -lntp 2>/dev/null | sed -n 's/.*:8003 .*pid=\([0-9]*\).*/\1/p' | head -1 || true); \
-               if [ -n \"\$PID\" ]; then kill \"\$PID\" || true; sleep 2; fi; \
-               nohup python3 ~/kv_node.py \
-               --role shard \
-               --node-id shard-3 \
-               --port 8003 \
-               --coordinator-url http://${{ secrets.COORDINATOR_PRIVATE_IP }}:8000 \
-               --advertise-url http://${{ secrets.SHARD1_PRIVATE_IP }}:8003 \
-               < /dev/null > ~/shard3.log 2>&1 &"
-
-            sleep 5
-
-            echo "5. Checking Coordinator health..."
-
+            sleep 4
+            echo "6. Checking Coordinator health and registered Replica Sets..."
             curl -s http://localhost:8000/health
-
             echo ""
-            echo "6. Checking registered shards..."
-
             curl -s http://localhost:8000/shards
-
           EOF

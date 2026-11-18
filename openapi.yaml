@@ -1,8 +1,11 @@
 openapi: 3.0.3
 info:
-  title: Distributed Key-Value Store API (Capstone KPI)
-  description: Специфікація API вузла-координатора та шардів із підтримкою Consistent Hashing і складеного первинного ключа (Partition Key + Sort Key).
-  version: 1.0.0
+  title: Distributed Key-Value Store API — Replication & Quorum (Capstone KPI, Milestone 3)
+  description: >
+    Специфікація API розподіленого сховища з підтримкою Consistent Hashing,
+    складеного ключа (PK + SK), Leader-Follower реплікації через Append-Only Log (WAL),
+    збереження offset фолловерами та кворуму R + W > N.
+  version: 2.0.0
 servers:
   - url: http://localhost:8000
     description: Вузол-координатор
@@ -20,53 +23,86 @@ paths:
               properties:
                 table_name:
                   type: string
-                  example: users
+                  example: orders
                 partition_key:
                   type: string
-                  example: user_id
+                  example: customer_id
                 sort_key:
                   type: string
                   nullable: true
-                  example: created_at
+                  example: order_id
       responses:
         '201':
-          description: Таблицю успішно створено
+          description: Таблицю створено та синхронізовано на всі репліки
     get:
       summary: Отримати список зареєстрованих таблиць
       responses:
         '200':
-          description: Список схем таблиць
-
+          description: Схеми таблиць
   /shards:
     get:
-      summary: Список активних шардів та стан хеш-кільця
+      summary: Статус шардів, наборів реплік (Leader/Followers) та параметрів кворуму
       responses:
         '200':
-          description: Інформація про зареєстровані шарди
+          description: Топологія кластера та реплікації
   /shards/register:
     post:
-      summary: Реєстрація нового шарда в координаторі
+      summary: Реєстрація репліки шарда (leader або follower) у координаторі
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [shard_id, url]
+              required: [shard_id, node_id, replica_role, url]
               properties:
                 shard_id:
                   type: string
                   example: shard-1
+                node_id:
+                  type: string
+                  example: shard-1-follower-1
+                replica_role:
+                  type: string
+                  enum: [leader, follower]
+                  example: follower
                 url:
                   type: string
-                  example: http://10.0.11.50:8001
+                  example: http://10.0.11.48:8002
       responses:
         '200':
-          description: Шард зареєстровано та ключі перебалансовано
-
+          description: Репліку зареєстровано в наборі реплік шарда
+  /cluster/quorum:
+    get:
+      summary: Отримати поточні налаштування кворуму (N, W, R)
+      responses:
+        '200':
+          description: Поточна конфігурація кворуму
+    post:
+      summary: Змінити параметри кворуму (N, W, R) та перевірити умову R + W > N
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [n, w, r]
+              properties:
+                n:
+                  type: integer
+                  example: 3
+                w:
+                  type: integer
+                  example: 2
+                r:
+                  type: integer
+                  example: 2
+      responses:
+        '200':
+          description: Параметри кворуму оновлено
   /tables/{table_name}/items:
     post:
-      summary: CREATE — Покласти пару ключ-значення
+      summary: CREATE — Запис через вузол-лідер у WAL з кворумним підтвердженням W
       parameters:
         - in: path
           name: table_name
@@ -83,22 +119,21 @@ paths:
               properties:
                 pk:
                   type: string
-                  description: Partition Key
-                  example: user_101
+                  example: client_alpha
                 sk:
                   type: string
-                  description: Sort Key (опціонально, якщо таблиця зі складеним ключем)
-                  example: order_2026_01
+                  example: 2026-11-17#001
                 value:
                   type: object
-                  example: {"product": "Laptop", "price": 1200}
+                  example: {"item": "Laptop", "amount": 1200}
       responses:
         '201':
-          description: Запис збережено на відповідному шарді
-
+          description: Запис збережено в WAL та підтверджено кворумом W реплік
+        '503':
+          description: Кворум W не досягнуто
   /tables/{table_name}/items/{pk}:
     get:
-      summary: READ — Прочитати значення за ключем (або всі записи партиції)
+      summary: READ — Читання з розподілом між живими репліками або кворумом R
       parameters:
         - in: path
           name: table_name
@@ -117,11 +152,11 @@ paths:
             type: string
       responses:
         '200':
-          description: Значення знайдено
+          description: Значення знайдено (обрано найновішу версію з R реплік)
         '404':
           description: Ключ не знайдено
     delete:
-      summary: DELETE — Видалити запис за ключем
+      summary: DELETE — Видалення запису через лідер та WAL
       parameters:
         - in: path
           name: table_name
@@ -140,29 +175,17 @@ paths:
             type: string
       responses:
         '200':
-          description: Запис видалено
-        '404':
-          description: Ключ не знайдено
-
-  /tables/{table_name}/items/{pk}/exists:
+          description: Запис видалено через WAL
+  /wal:
     get:
-      summary: EXISTS — Перевірити наявність значення за ключем
+      summary: Читання записів append-only логу (WAL) починаючи з потрібного offset
       parameters:
-        - in: path
-          name: table_name
-          required: true
-          schema:
-            type: string
-        - in: path
-          name: pk
-          required: true
-          schema:
-            type: string
         - in: query
-          name: sk
+          name: from_offset
           required: false
           schema:
-            type: string
+            type: integer
+            example: 0
       responses:
         '200':
-          description: Результат перевірки існування ключа (true/false)
+          description: Список подій логу для досинхронізації фолловера
