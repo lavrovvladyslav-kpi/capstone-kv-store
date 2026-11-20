@@ -698,14 +698,18 @@ class KVRequestHandler(BaseHTTPRequestHandler):
 
     # логіка реплік шарда
 
-    def _replicate_to_followers(self) -> list:
-        """Лідер ініціює синхронізацію фолловерів із WAL-логом і збирає їхні підтвердження (ACK)."""
-        followers = getattr(self.server, "followers", [])
+    def _replicate_to_followers(self, w_req: int = 3) -> list:
+        """Лідер синхронізує фолловерів із WAL-логом, доки не набереться кворум w_req."""
         acked_nodes = [NODE_ID]
+        if len(acked_nodes) >= w_req:
+            return acked_nodes  # W=1: асинхронний режим, фолловери дочитають у фоні
+        followers = getattr(self.server, "followers", [])
         for flw in followers:
             st, sync_resp = http_json_request("POST", f"{flw['url']}/internal/sync", {}, timeout=1.5)
             if st == 200 and int(sync_resp.get("current_offset", 0)) >= LAST_APPLIED_OFFSET:
                 acked_nodes.append(flw["node_id"])
+                if len(acked_nodes) >= w_req:
+                    break  # W=2: достатньо 1 фолловера + лідер
         return acked_nodes
 
     def _shard_leader_handle_create(self, table: str, pk: str, sk, val, w_req: int):
@@ -714,7 +718,7 @@ class KVRequestHandler(BaseHTTPRequestHandler):
 
         if ROLE == "shard":
             ev = append_to_wal("CREATE", table=table, pk=pk, sk=sk, value=val)
-            acked_nodes = self._replicate_to_followers()
+            acked_nodes = self._replicate_to_followers(w_req)
             quorum_met = len(acked_nodes) >= w_req
             http_code = 201 if quorum_met else 503
             return self._send(http_code, {
@@ -760,7 +764,7 @@ class KVRequestHandler(BaseHTTPRequestHandler):
             return self._send(404, {"operation": "DELETE", "error": "Key not found", "pk": pk, "node": NODE_ID})
 
         ev = append_to_wal("DELETE", table=table, pk=pk, sk=sk)
-        acked_nodes = self._replicate_to_followers()
+        acked_nodes = self._replicate_to_followers(w_req)
         quorum_met = len(acked_nodes) >= w_req
         return self._send(200 if quorum_met else 503, {
             "operation": "DELETE",
